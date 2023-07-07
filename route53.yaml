@@ -1,0 +1,25 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS CloudFormation Sample Template ELB_With_Existing_VPC: Sample template showing how to create an Elastic Load Balancer in an existing Amazon VPC. **WARNING** This template creates one or more Amazon EC2 instances and an Elastic Load Balancer. You will be billed for the AWS resources used if you create a stack from this template.'
+Parameters:
+  DomainName:
+    Type: String
+    Description: The name of the hosted zone to create the record in.
+
+  loadbalancerDNS:
+    Type: String
+    Description: The DNS name of the load balancer to create the record for.
+
+Resources:
+  DNSRecordSet:
+   Type: AWS::Route53::RecordSet
+   Properties:
+    HostedZoneName: !Ref DomainName
+    Name: "@"
+    Type: A
+    TTL: '900'
+    AliasTarget:
+        DNSName: !Ref loadbalancerDNS
+        HostedZoneId: AWS::Region
+
+        
+ 

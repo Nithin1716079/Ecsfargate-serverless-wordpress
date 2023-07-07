@@ -1,0 +1,218 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'VPC with public and private subnets'
+
+Parameters:
+      AvailabilityZone:
+        Description: Select the Availability Zone
+        Type: AWS::EC2::AvailabilityZone::Name
+
+      ContainerPort:
+        Type: Number
+        Description: Enter the port the container listens on (Eg:80)
+        MinValue: 1
+        MaxValue: 65535
+        ConstraintDescription: must be between 1 and 65535.
+
+      ImageId:
+        Type: String
+        Description: Enter the Docker Image ID for the container (Eg:httpd:2.4)
+
+      ClusterName:
+        Type: String 
+        Description: Enter the Name for Cluster. 
+        Default: ECS
+
+      VpcCIDR:
+        Description: Please enter the IP range (CIDR notation) for this VPC(Eg:10.192.0.0/16)
+        Type: String
+        
+      PublicSubnetCIDR:
+        Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone(Eg:10.192.10.0/24)
+        Type: String
+        
+      PrivateSubnetCIDR:
+        Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone(Eg:10.192.12.0/24)
+        Type: String
+  
+      PerformanceMode:
+        Description: Select the performance mode for the file system. For more information, see Amazon EFS Performance Modes in the Amazon Elastic File System User Guide.
+        Type: String
+        AllowedValues: [ generalPurpose, maxIO ]
+
+      ThroughputMode:
+        Description: Select the throughput mode for the file system. For more information, see Amazon EFS Throughput Modes in the Amazon Elastic File System User Guide.
+        Type: String
+        AllowedValues: [ bursting, provisioned ]
+
+      EfsProvisionedThroughputInMibps:
+        Description: Enter the throughput, measured in MiB/s, that you want to provision for the file system (Required if ThroughputMode is set to provisioned otherwise enter 0)
+        Type: Number
+        MinValue: 0
+        MaxValue: 1024
+
+      MinCapacity:
+        Description: Enter the minimum number of tasks to run in cluster (Eg:1)
+        Type: Number
+
+      MaxCapacity:
+        Description: Enter the maximum number of tasks to run in cluster (Eg:4)
+        Type: Number
+
+      TaskCpu:
+        Description: Enter the number of cpu units used by the task (Eg:512) Refer more combinations on https://docs.aws.amazon.com/AmazonECS/latest/userguide/fargate-task-defs.html
+        Type: Number
+
+      TaskMemory:
+        Description: Enter the amount of memory (in GiB) used by the task (Eg:2) Refer more combinations on https://docs.aws.amazon.com/AmazonECS/latest/userguide/fargate-task-defs.html
+        Type: Number
+
+      CPUAlarmThreshold:
+        Description: Enter the CPU utilization threshold for the alarm (Eg:80)
+        Type: Number
+        MinValue: 1
+        MaxValue: 100
+
+      EmailId:
+        Description: Enter the email id to receive the alarm notifications
+        Type: String
+     
+      DBName:
+        Description: Enter the name of the database to connect to
+        Type: String
+        Default: yobiteldb
+
+      DomainName:
+        Type: String
+        Description: The name of the hosted zone to create the record in.
+
+Rules:
+  ProvisionedThroughput:
+    RuleCondition: !Equals [ !Ref ThroughputMode, provisioned ]
+    Assertions:
+      - Assert: !Not [ !Equals [ '0', !Ref EfsProvisionedThroughputInMibps ] ]
+        AssertDescription: "EfsProvisionedThroughputInMibps must be greater than 0 when ThroughputMode is provisioned"
+  BurstingThroughput:
+    RuleCondition: !Equals [ !Ref ThroughputMode, bursting ]
+    Assertions:
+      - Assert:  !Equals [ '0', !Ref EfsProvisionedThroughputInMibps ]
+        AssertDescription: "EfsProvisionedThroughputInMibps must be 0 when ThroughputMode is bursting"
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: "VPC Configuration"
+        Parameters:
+          - ClusterName
+          - VpcCIDR
+          - PublicSubnetCIDR
+          - PrivateSubnetCIDR
+          - AvailabilityZone
+          - DBName
+      - Label:
+          default: "EFS Configuration"
+        Parameters:
+          - PerformanceMode
+          - ThroughputMode
+          - EfsProvisionedThroughputInMibps   
+      - Label:
+          default: "Container Configuration"
+        Parameters:
+          - MinCapacity
+          - MaxCapacity
+          - TaskCpu
+          - TaskMemory
+          - ContainerPort
+          - ImageId
+      - Label:
+          default: "Monitoring Configuration"
+        Parameters:
+          - CPUAlarmThreshold
+          - EmailId
+   
+Conditions:
+  IsProvisioned:
+    !Equals [ !Ref ThroughputMode, provisioned ]      
+
+Resources:
+  VPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://wordpress-ecs-fargatespot-serverless.s3.amazonaws.com/vpc.yaml
+      Parameters:
+        VpcCIDR: !Ref VpcCIDR
+        PublicSubnetCIDR: !Ref PublicSubnetCIDR
+        PrivateSubnetCIDR: !Ref PrivateSubnetCIDR
+        AvailabilityZone: !Ref AvailabilityZone
+
+  
+
+  EFS:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://wordpress-ecs-fargatespot-serverless.s3.amazonaws.com/efs.yaml
+      Parameters:
+        PerformanceMode: !Ref PerformanceMode
+        ThroughputMode: !Ref ThroughputMode
+        EfsProvisionedThroughputInMibps: !Ref EfsProvisionedThroughputInMibps
+        ClusterName: !Ref ClusterName
+        VpcCIDR: !Ref VpcCIDR
+        VPC: !GetAtt VPC.Outputs.VPC
+        PublicSubnet: !GetAtt VPC.Outputs.PublicSubnet
+        PrivateSubnet: !GetAtt VPC.Outputs.PrivateSubnet
+
+  Cluster:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://wordpress-ecs-fargatespot-serverless.s3.amazonaws.com/ecs.yaml
+      Parameters:
+        ClusterName: !Ref ClusterName
+        ImageId: !Ref ImageId
+        MinCapacity: !Ref MinCapacity
+        MaxCapacity: !Ref MaxCapacity
+        TaskCpu: !Ref TaskCpu
+        TaskMemory: !Ref TaskMemory
+        ContainerPort: !Ref ContainerPort
+        DBName: !Ref DBName
+        VPC: !GetAtt VPC.Outputs.VPC
+        PublicSubnet: !GetAtt VPC.Outputs.PublicSubnet
+        PrivateSubnet: !GetAtt VPC.Outputs.PrivateSubnet
+        FileSystemId: !GetAtt EFS.Outputs.FileSystemId
+        AccessPointId: !GetAtt EFS.Outputs.AccessPointId  
+        ECSTaskRole: !GetAtt EFS.Outputs.TaskRole 
+        DatabaseEndpoint: !GetAtt Database.Outputs.DBEndpoint
+
+  Monitoring:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://wordpress-ecs-fargatespot-serverless.s3.amazonaws.com/monitoring.yaml
+      Parameters:
+        ClusterName: !Ref ClusterName
+        ServiceName: !GetAtt Cluster.Outputs.service
+        CPUAlarmThreshold: !Ref CPUAlarmThreshold
+        EmailId: !Ref EmailId
+  
+  Database:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://wordpress-ecs-fargatespot-serverless.s3.amazonaws.com/Database.yaml
+      Parameters:
+        DBName: !Ref DBName
+        VPC: !GetAtt VPC.Outputs.VPC
+        PublicSubnet: !GetAtt VPC.Outputs.PublicSubnet
+        PrivateSubnet: !GetAtt VPC.Outputs.PrivateSubnet
+
+  Route53:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://wordpress-ecs-fargatespot-serverless.s3.amazonaws.com/route53.yaml
+      Parameters:
+        loadbalancerDNS: !GetAtt Cluster.Outputs.Endpoint
+        DomainName: !Ref DomainName
+        
+                  
+Outputs:
+     Endpoint:
+      Description: "Loadbalancer endpoint"
+      Value: 
+       !GetAtt Cluster.Outputs.Endpoint
